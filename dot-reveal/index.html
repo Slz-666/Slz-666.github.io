@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#F5F1E8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="点阵涂抹">
+<title>点阵涂抹 · Dot Reveal</title>
+<style>
+:root{
+  --paper:#F5F1E8;
+  --ink:#2A2622;
+  --ink-2:#7C7469;
+  --line:rgba(42,38,34,.13);
+  --accent:#9C3A3A;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;height:100%}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  background:var(--paper);color:var(--ink);
+  display:grid;grid-template-rows:auto 1fr auto;
+  height:100vh;height:100dvh;
+  overscroll-behavior:none;
+  -webkit-font-smoothing:antialiased;
+  user-select:none;-webkit-user-select:none;
+  overflow:hidden;
+}
+
+header{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  min-width:0;
+  padding:14px 18px 8px;
+  padding-top:calc(14px + env(safe-area-inset-top));
+}
+.brand{display:flex;align-items:baseline;gap:8px;min-width:0}
+.brand b{font-size:15px;font-weight:600;letter-spacing:.03em}
+.brand i{font-style:normal;font-size:11px;color:var(--ink-2);letter-spacing:.12em;text-transform:uppercase}
+.tools{display:flex;gap:8px;transition:opacity .25s}
+body:not(.ready) .tools{opacity:.3;pointer-events:none}
+
+button{
+  font:inherit;font-size:13px;line-height:1;
+  border:1px solid var(--line);background:transparent;color:var(--ink);
+  padding:8px 15px;border-radius:999px;cursor:pointer;
+  transition:background .16s,border-color .16s,transform .1s;
+}
+button:hover{background:rgba(42,38,34,.055)}
+button:active{transform:scale(.96)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.primary:hover{background:#8A3131}
+button:disabled{opacity:.4;cursor:default}
+
+main{
+  position:relative;min-height:0;min-width:0;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;
+  padding:8px 16px;
+}
+#cv{
+  display:none;
+  max-width:100%;max-height:100%;width:auto;height:auto;
+  touch-action:none;cursor:crosshair;
+  border-radius:3px;
+  box-shadow:0 1px 2px rgba(42,38,34,.07),0 18px 40px -18px rgba(42,38,34,.3);
+}
+body.ready #cv{display:block}
+
+.empty{
+  position:absolute;inset:8px 16px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+  border:1px dashed var(--line);border-radius:18px;
+  color:var(--ink-2);text-align:center;padding:24px;
+}
+body.ready .empty{display:none}
+.empty p{margin:0;font-size:14px;line-height:1.7}
+.empty .hint{font-size:12px;color:#A39B90}
+.empty .t1{font-size:15px;color:var(--ink)}
+
+footer{
+  display:flex;align-items:center;gap:20px;
+  min-width:0;
+  padding:10px 20px 16px;
+  padding-bottom:calc(16px + env(safe-area-inset-bottom));
+}
+.ctl{display:flex;align-items:center;gap:9px;flex:1;min-width:0}
+footer .lab{font-size:12px;color:var(--ink-2);white-space:nowrap}
+footer .val{font-size:12px;color:var(--ink-2);min-width:34px;text-align:right;font-variant-numeric:tabular-nums}
+input[type=range]{
+  -webkit-appearance:none;appearance:none;
+  flex:1;min-width:0;height:24px;background:transparent;margin:0;cursor:pointer;
+}
+input[type=range]::-webkit-slider-runnable-track{height:2px;background:var(--line);border-radius:2px}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;
+  width:16px;height:16px;border-radius:50%;background:var(--accent);
+  margin-top:-7px;border:none;
+}
+input[type=range]::-moz-range-track{height:2px;background:var(--line);border-radius:2px}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border:none;border-radius:50%;background:var(--accent)}
+
+#cursor{
+  position:fixed;left:0;top:0;border-radius:50%;pointer-events:none;z-index:20;
+  border:1.5px solid rgba(255,255,255,.9);
+  box-shadow:0 0 0 1px rgba(0,0,0,.22);
+  transform:translate(-50%,-50%);display:none;
+}
+@media (pointer:fine){ body.ready:not(.drawing) #cursor{display:block} }
+
+body.drag::after{
+  content:'松开即可导入图片';
+  position:fixed;inset:0;z-index:60;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(245,241,232,.94);
+  color:var(--accent);font-size:15px;letter-spacing:.05em;
+  outline:2px dashed rgba(156,58,58,.5);outline-offset:-12px;
+}
+
+.modal{
+  position:fixed;inset:0;z-index:80;display:none;
+  flex-direction:column;align-items:center;justify-content:center;gap:16px;
+  background:rgba(245,241,232,.97);padding:24px;
+}
+.modal.on{display:flex}
+.modal p{margin:0;font-size:13px;color:var(--ink-2)}
+.modal img{
+  max-width:min(100%,420px);max-height:62vh;border-radius:6px;
+  box-shadow:0 12px 40px -12px rgba(42,38,34,.4);
+  -webkit-touch-callout:default;user-select:auto;-webkit-user-select:auto;
+}
+
+/* 窄屏：品牌副标题让位给按钮，按钮收紧，三个按钮刚好不挤 */
+@media (max-width:420px){
+  header{padding-left:14px;padding-right:14px;gap:8px}
+  .brand i{display:none}
+  .tools{gap:6px}
+  .tools button{padding:7px 12px;font-size:12.5px}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand"><b>点阵涂抹</b><i>dot reveal</i></div>
+  <div class="tools">
+    <button id="btnSwap">换图</button>
+    <button id="btnReset">复原</button>
+    <button id="btnExport" class="primary">导出</button>
+  </div>
+</header>
+
+<main>
+  <canvas id="cv"></canvas>
+  <div class="empty" id="empty">
+    <svg width="76" height="56" viewBox="0 0 76 56" aria-hidden="true">
+      <g fill="#9C3A3A" opacity=".42">
+        <circle cx="10" cy="10" r="6"/><circle cx="29" cy="10" r="6"/><circle cx="48" cy="10" r="6"/><circle cx="67" cy="10" r="6"/>
+        <circle cx="10" cy="29" r="6"/><circle cx="29" cy="29" r="6"/><circle cx="48" cy="29" r="6"/><circle cx="67" cy="29" r="6"/>
+        <circle cx="10" cy="48" r="2.2"/><circle cx="29" cy="48" r="3.4"/><circle cx="48" cy="48" r="5"/><circle cx="67" cy="48" r="6"/>
+      </g>
+    </svg>
+    <div>
+      <p class="t1">导入一张图片</p>
+      <p class="hint">按住涂抹，大球分裂成小球，越涂越接近原图</p>
+    </div>
+    <button class="primary" id="btnPick">选择图片</button>
+    <p class="hint">也可以拖拽进来，或直接 Ctrl / ⌘ + V 粘贴</p>
+  </div>
+</main>
+
+<footer>
+  <div class="ctl">
+    <span class="lab">笔刷</span>
+    <input type="range" id="brush" min="12" max="130" step="1" value="46">
+    <span class="val" id="brushVal">46</span>
+  </div>
+  <div class="ctl">
+    <span class="lab">泡泡</span>
+    <input type="range" id="bubble" min="2" max="40" step="1" value="4">
+    <span class="val" id="bubbleVal">4×3</span>
+  </div>
+</footer>
+
+<div id="cursor"></div>
+
+<div class="modal" id="saveModal">
+  <p>长按图片 → 保存到相册</p>
+  <img id="saveImg" alt="导出的成品图">
+  <button id="btnCloseSave">完成</button>
+</div>
+
+<input type="file" id="file" accept="image/*" hidden>
+
+<script>
+(function(){
+  'use strict';
+
+  var canvas = document.getElementById('cv');
+  var ctx = canvas.getContext('2d');
+  var src = document.createElement('canvas');              // 离屏原图，取色 + 脏区回贴
+  var sctx = src.getContext('2d', { willReadFrequently: true });
+
+  var W = 0, H = 0;     // canvas 内部尺寸
+  var cols = 0, rows = 0;
+  var gap = 0;          // 同一行相邻泡泡间距（canvas 内部像素）
+  var rowH = 0;         // 行高 = gap * 0.866（蜂窝排布）
+  var r0 = 0;           // 初始（最大）泡泡半径
+  var minR = 3;         // 球小到这个半径就停止分裂，只继续缩小
+  var dprNow = 1;
+
+  var imgPx = null;     // 整幅原图的像素缓存，分裂时给子球取色
+  var dots = [];        // 当前所有"叶子球"。分裂时父球被 4 个子球替换
+  var anim = [];        // 正在播化开动画的球
+  var rafId = 0;
+  var ready = false;
+
+  // 一趟划过的深度换算成"化开进度"的增益。这个值决定了渐变带有多宽：
+  // 笔心 w=1 → 一趟加到 1.5，直接化开完成（分裂成 4 个小球）
+  // 笔边 w→0 → 一趟只加一点点，永远停在半透明状态，要多涂几趟
+  // 中间是一段连续的过渡带，所以"中心分裂、边缘变淡"是同一套公式自然长出来的
+  var STEP_GAIN = 1.5;
+
+  // 子球布局：4 个 2×2 排布。偏移和半径都取 0.42r 时，
+  // 相邻子球刚好相切，看得出是一颗颗小球，而不是糊成一团
+  var KID_OFF = 0.44;
+  var KID_R = 0.44;
+
+  var MAX_DOTS = 60000;   // 保险丝：球太多就停止分裂，改为继续缩小
+
+  var brushCss = 46;    // 笔刷半径（屏幕 CSS 像素）
+  var bubbleCols = 4;   // 横向泡泡数，越大泡泡越小，可拖滑块调
+  var lastImg = null;   // 记住原图，改泡泡数量后重建用
+  var dirty = null;
+  var scheduled = false;
+  var drawing = false;
+  var lastX = 0, lastY = 0;
+  var strokeId = 0;     // 一次按下到抬起的编号，同一球每趟只结算一次
+  var objectUrl = null;
+
+  var TAU = Math.PI * 2;
+
+  /* ---------------- 工具 ---------------- */
+
+  function clamp(v, a, b){ return v < a ? a : (v > b ? b : v); }
+
+  function toInternal(e){
+    var r = canvas.getBoundingClientRect();
+    return {
+      x: (e.clientX - r.left) * (canvas.width / r.width),
+      y: (e.clientY - r.top) * (canvas.height / r.height)
+    };
+  }
+
+  // 屏幕上的笔刷半径换算到 canvas 内部坐标（跟手，不随 canvas 缩放变化）。
+  // 泡泡特别大时（比如横向只有 4 个）笔刷要比默认大，否则一笔下去够不到球心，
+  // 等于涂不动。所以实际半径至少是泡泡间距的 0.42 倍
+  function brushCssEffective(){
+    var r = canvas.getBoundingClientRect();
+    var minInternal = gap ? gap * 0.42 : 0;
+    return Math.max(brushCss, minInternal * (r.width / canvas.width));
+  }
+
+  function brushInternal(){
+    var r = canvas.getBoundingClientRect();
+    return brushCssEffective() * (canvas.width / r.width);
+  }
+
+  /* ---------------- 球 ---------------- */
+
+  // 取原图上某点的颜色。子球各自取自己位置的颜色，
+  // 所以"分裂"本质上是提高采样密度 —— 球越小越接近原图
+  function dotColor(x, y){
+    var xi = Math.round(x), yi = Math.round(y);
+    if (xi < 0) xi = 0; else if (xi >= W) xi = W - 1;
+    if (yi < 0) yi = 0; else if (yi >= H) yi = H - 1;
+    var k = (yi * W + xi) << 2;
+    return 'rgb(' + imgPx[k] + ',' + imgPx[k + 1] + ',' + imgPx[k + 2] + ')';
+  }
+
+  function makeDot(x, y, r, sid){
+    return {
+      x: x, y: y, r: r, c: dotColor(x, y),
+      charge: 0,        // 0→1：攒够 1 就触发一级化开
+      sp: 0,            // 0→1：化开的动画进度，正在化开的球才 > 0
+      t0: 0,            // 化开动画的起始时刻
+      sid: sid, wmax: 0, done: false,
+      kids: null        // 4 个子球的几何与颜色，过渡期按插值画
+    };
+  }
+
+  // 4 个子球：2×2 排布，偏移和半径都取 0.44r，相邻刚好相切。
+  // 颜色各自取原图对应位置 —— 所以"分裂"本质是提高采样密度，
+  // 球越小采样越密，画面自然越接近原图
+  function buildKids(d){
+    var o = d.r * KID_OFF;
+    var rr = d.r * KID_R;
+    var kids = [];
+    var dx = [-o, o, -o, o];
+    var dy = [-o, -o, o, o];
+    for (var m = 0; m < 4; m++){
+      var kx = d.x + dx[m], ky = d.y + dy[m];
+      kids.push(makeDot(kx, ky, rr, d.sid));
+      kids[m].done = true;   // 子球一出生就算"本趟已结算"，否则同一趟里会连锁分裂
+    }
+    return kids;
+  }
+
+  function ensureKids(d){
+    if (!d.kids) d.kids = buildKids(d);
+    return d.kids;
+  }
+
+  // 按初始的蜂窝网格铺满大球
+  function seedDots(){
+    anim.length = 0;
+    if (rafId){ cancelAnimationFrame(rafId); rafId = 0; }
+    dots = [];
+    for (var j = 0; j < rows; j++){
+      var y = (j + 0.5) * rowH;
+      var shift = (j & 1) * 0.5;
+      for (var i = 0; i < cols; i++){
+        var x = (i + shift) * gap;
+        if (x + r0 < 0 || x - r0 > W) continue;
+        if (y + r0 < 0 || y - r0 > H) continue;
+        dots.push(makeDot(x, y, r0, -1));
+      }
+    }
+  }
+
+  /* ---------------- 建网格 ---------------- */
+
+  function initFromImage(img){
+    lastImg = img;
+    var headerH = document.querySelector('header').getBoundingClientRect().height;
+    var footerH = document.querySelector('footer').getBoundingClientRect().height;
+
+    var availW = clamp(window.innerWidth - 40, 240, 1280);
+    var availH = clamp(window.innerHeight - headerH - footerH - 28, 200, 1000);
+
+    var s = Math.min(availW / img.naturalWidth, availH / img.naturalHeight);
+    var cssW = Math.max(1, Math.round(img.naturalWidth * s));
+    var cssH = Math.max(1, Math.round(img.naturalHeight * s));
+    var dpr = clamp(window.devicePixelRatio || 1, 1, 2);
+    dprNow = dpr;
+
+    W = Math.round(cssW * dpr);
+    H = Math.round(cssH * dpr);
+    canvas.width = W;
+    canvas.height = H;
+
+    src.width = W;
+    src.height = H;
+    sctx.clearRect(0, 0, W, H);
+    sctx.imageSmoothingEnabled = true;
+    sctx.imageSmoothingQuality = 'high';
+    sctx.drawImage(img, 0, 0, W, H);
+
+    // 横向泡泡数决定间距。采用蜂窝排布（奇数行错开半个间距）：
+    // 方格网里圆永远铺不满 —— 要么留大块菱形空洞，要么重叠成一团；
+    // 蜂窝排布同样半径下空洞小得多，圆还保持得住
+    gap = (cssW / bubbleCols) * dpr;
+    rowH = gap * 0.866;
+    cols = Math.max(1, Math.round(W / gap));
+    rows = Math.max(1, Math.round(H / rowH));
+    r0 = gap * 0.52;
+
+    // 球小到这个尺度就停止分裂。按 dpr 换算，保证各设备上"最小颗粒"的
+    // 视觉尺寸一致，同时把最大球数压在可控范围
+    minR = 3.4 * dpr;
+
+    // 一次读完像素：既给初始大球取色，也给分裂出的子球取色
+    imgPx = sctx.getImageData(0, 0, W, H).data;
+
+    seedDots();
+
+    ready = true;
+    document.body.classList.add('ready');
+    syncBubbleLabel();
+    paintAll();
+  }
+
+  /* ---------------- 绘制 ---------------- */
+
+  // 画一个球。三种状态：
+  //   1) 没被涂到         → 实心圆
+  //   2) 被擦到但没攒满   → 已经在变淡、略缩，笔刷边缘那圈就是这状态
+  //   3) 攒满触发化开     → 大球被 4 个子球顶掉，280ms 演完
+  // 三种状态之间透明度是接得上的，所以从笔心到笔边是一条连续渐变，不是硬边
+  function drawDot(d){
+    var sp = d.sp;
+    var ch = d.charge;
+
+    if (sp > 0 && d.kids){
+      // 子球生长用 ease-out：早点把轮廓立起来
+      var e = 1 - (1 - sp) * (1 - sp);
+
+      // 大球：从"擦到一半时的透明度"接着往下淡，同时收缩让位
+      var fade = 1 - sp;
+      fade = fade * fade;
+      ctx.globalAlpha = 0.45 * fade;
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, d.r * (0.85 - 0.4 * sp), 0, TAU);
+      ctx.fillStyle = d.c;
+      ctx.fill();
+
+      // 子球：从父球中心扩散到目标位置，半径从 32% 长到全额
+      ctx.globalAlpha = sp < 0.4 ? sp * 2.5 : 1;
+      var kids = d.kids;
+      for (var m = 0; m < 4; m++){
+        var kid = kids[m];
+        var kx = d.x + (kid.x - d.x) * e;
+        var ky = d.y + (kid.y - d.y) * e;
+        var kr = d.r * 0.32 + (kid.r - d.r * 0.32) * e;
+        ctx.beginPath();
+        ctx.arc(kx, ky, kr, 0, TAU);
+        ctx.fillStyle = kid.c;
+        ctx.fill();
+      }
+      return;
+    }
+
+    if (ch > 0.04){
+      // 攒进度中：越接近满越淡、越缩。这里刻意只淡到 0.72 ——
+      // 淡太多会变成一层半透明的雾斑糊在画面上，涂一圈就留下一圈脏印子
+      ctx.globalAlpha = 1 - 0.28 * ch;
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, d.r * (1 - 0.1 * ch), 0, TAU);
+      ctx.fillStyle = d.c;
+      ctx.fill();
+      return;
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.arc(d.x, d.y, d.r, 0, TAU);
+    ctx.fillStyle = d.c;
+    ctx.fill();
+  }
+
+  function drawDots(x0, y0, x1, y1){
+    var alpha = 1;
+    for (var k = 0; k < dots.length; k++){
+      var d = dots[k];
+      if (d.x + d.r < x0 || d.x - d.r > x1) continue;
+      if (d.y + d.r < y0 || d.y - d.r > y1) continue;
+
+      if (d.charge > 0.04 || (d.sp > 0 && d.kids)){
+        drawDot(d);
+        alpha = -1;                 // drawDot 会改 globalAlpha，标记需要复位
+        continue;
+      }
+
+      if (alpha !== 1){
+        ctx.globalAlpha = 1;
+        alpha = 1;
+      }
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, d.r, 0, TAU);
+      ctx.fillStyle = d.c;
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function paintAll(){
+    ctx.clearRect(0, 0, W, H);
+    ctx.drawImage(src, 0, 0);
+    drawDots(0, 0, W, H);
+  }
+
+  // 只重绘一块矩形：先贴回该区域原图，再补画落在里面的球。
+  // 清的范围要外扩一个最大球半径 —— 被分裂的球直径可能比笔刷还大，
+  // 只清笔刷范围的话，旧的大球会露出半截弧线残留在边界外
+  function repaint(x0, y0, x1, y1){
+    var ex = Math.ceil(r0) + 2;
+    x0 = clamp(Math.floor(x0) - ex, 0, W);
+    y0 = clamp(Math.floor(y0) - ex, 0, H);
+    x1 = clamp(Math.ceil(x1) + ex, 0, W);
+    y1 = clamp(Math.ceil(y1) + ex, 0, H);
+    var w = x1 - x0, h = y1 - y0;
+    if (w <= 0 || h <= 0) return;
+
+    ctx.clearRect(x0, y0, w, h);
+    ctx.drawImage(src, x0, y0, w, h, x0, y0, w, h);
+    drawDots(x0, y0, x1, y1);
+  }
+
+  /* ---------------- 涂抹（分裂） ---------------- */
+
+  function addDirty(x0, y0, x1, y1){
+    if (!dirty){ dirty = { x0: x0, y0: y0, x1: x1, y1: y1 }; return; }
+    if (x0 < dirty.x0) dirty.x0 = x0;
+    if (y0 < dirty.y0) dirty.y0 = y0;
+    if (x1 > dirty.x1) dirty.x1 = x1;
+    if (y1 > dirty.y1) dirty.y1 = y1;
+  }
+
+  // 在一点盖章：范围内每个球按距离加权累积"化开进度"（charge）。
+  // 进度满 1 才真正分裂成 4 个小球；没满的球留在半透明过渡态，
+  // 所以一笔扫过去，笔心已经裂开、笔边还是半化的，中间是连续渐变。
+  // 同一趟拖拽里每个球只结算一次，否则手指停在原地会瞬间把球炸成粉末
+  function stamp(cx, cy, R, sid){
+    var n = dots.length;          // 快照：这一趟不处理刚刚分裂出来的子球
+
+    for (var k = 0; k < n; k++){
+      var d = dots[k];
+      var dx = d.x - cx, dy = d.y - cy;
+      var d2 = dx * dx + dy * dy;
+
+      // 影响范围按"球面到笔刷边缘的距离"算，不是只看球心：
+      // 笔刷只是擦到大球边缘时也该留一点痕迹，否则球大笔刷小时
+      // 就变成"碰到就整颗消失"，没有渐变可言
+      var reach = R + d.r;
+      if (d2 > reach * reach) continue;
+
+      if (d.sid !== sid){ d.sid = sid; d.wmax = 0; d.done = false; }
+      if (d.done) continue;          // 这一趟已经结算过，不再重复
+      if (d.sp > 0) continue;        // 正在播化开动画，等它演完再攒下一级
+
+      var t = Math.sqrt(d2) / reach;        // 0 笔心正中，1 刚好擦到球边
+      var w = 1 - t * t;                    // 二次衰减：中心强、边缘弱
+      if (w > d.wmax){
+        d.charge += (w - d.wmax) * STEP_GAIN;
+        d.wmax = w;
+      }
+
+      if (d.charge < 1) continue;
+
+      // 攒满了 → 触发一级化开。这里不立刻替换，而是起一个 280ms 的动画：
+      // 大球慢慢被 4 个子球顶掉。所以涂过去看到的是"球在化"，不是瞬间换装
+      d.charge = 0;
+      d.done = true;
+
+      // 子球还要够大才值得再分一级，否则会碎成看不见的渣
+      if (d.r * KID_R > minR && dots.length < MAX_DOTS){
+        ensureKids(d);
+        startDissolve(d);
+      } else {
+        // 已到最小尺寸：继续缩小，最后只剩一点颗粒
+        d.r = Math.max(d.r * 0.78, minR * 0.5);
+        d.kids = null;               // 尺寸变了，缓存的子球几何作废
+      }
+    }
+
+    addDirty(cx - R - 1, cy - R - 1, cx + R + 1, cy + R + 1);
+  }
+
+  /* ---------------- 化开动画 ---------------- */
+
+  // 正在化开的球数量很少（一笔扫过去几十个），单独存一份，
+  // 每帧只推进这些，不去扫几万个球
+  var DISSOLVE_MS = 280;
+
+  function startDissolve(d){
+    d.sp = 0.0001;
+    d.t0 = performance.now();
+    anim.push(d);
+    if (!rafId) rafId = requestAnimationFrame(tickDissolve);
+  }
+
+  function tickDissolve(now){
+    rafId = 0;
+    var alive = 0;
+
+    for (var i = anim.length - 1; i >= 0; i--){
+      var d = anim[i];
+      var s = (now - d.t0) / DISSOLVE_MS;
+
+      if (s < 1){
+        d.sp = s;
+        alive++;
+        addDirty(d.x - d.r - 2, d.y - d.r - 2, d.x + d.r + 2, d.y + d.r + 2);
+        continue;
+      }
+
+      // 播完了：把父球就地改写成第 1 个子球，另外 3 个追加进数组。
+      // 就地改写而不是整体重建，dots 的索引保持稳定，涂抹时不会错位
+      var kids = d.kids;
+      var oldR = d.r;
+      d.x = kids[0].x; d.y = kids[0].y; d.r = kids[0].r; d.c = kids[0].c;
+      d.sp = 0; d.charge = 0; d.wmax = 0; d.done = true; d.kids = null;
+      dots.push(kids[1], kids[2], kids[3]);
+
+      addDirty(d.x - oldR * 2, d.y - oldR * 2, d.x + oldR * 2, d.y + oldR * 2);
+      anim.splice(i, 1);
+    }
+
+    requestFlush();
+    if (alive > 0) rafId = requestAnimationFrame(tickDissolve);
+  }
+
+  // 从上一采样点插值到当前点，快速划动也不会断
+  function strokeTo(x0, y0, x1, y1, R, sid){
+    var dx = x1 - x0, dy = y1 - y0;
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    var step = Math.max(1, R * 0.3);
+    var n = Math.max(1, Math.ceil(dist / step));
+    for (var s = 0; s <= n; s++){
+      var t = s / n;
+      stamp(x0 + dx * t, y0 + dy * t, R, sid);
+    }
+  }
+
+  function requestFlush(){
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(function(){
+      scheduled = false;
+      if (!dirty) return;
+      var d = dirty;
+      dirty = null;
+      repaint(d.x0, d.y0, d.x1, d.y1);
+    });
+  }
+
+  /* ---------------- 交互 ---------------- */
+
+  function updateCursor(e){
+    var c = document.getElementById('cursor');
+    var d = brushCssEffective() * 2;
+    c.style.width = d + 'px';
+    c.style.height = d + 'px';
+    c.style.left = e.clientX + 'px';
+    c.style.top = e.clientY + 'px';
+  }
+
+  canvas.addEventListener('pointerdown', function(e){
+    if (!ready) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (drawing) return;
+    drawing = true;
+    strokeId++;
+    document.body.classList.add('drawing');
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+    var p = toInternal(e);
+    lastX = p.x; lastY = p.y;
+    stamp(p.x, p.y, brushInternal(), strokeId);
+    requestFlush();
+    e.preventDefault();
+  });
+
+  canvas.addEventListener('pointermove', function(e){
+    if (e.pointerType === 'mouse') updateCursor(e);
+    if (!drawing) return;
+    var p = toInternal(e);
+    strokeTo(lastX, lastY, p.x, p.y, brushInternal(), strokeId);
+    lastX = p.x; lastY = p.y;
+    requestFlush();
+    e.preventDefault();
+  });
+
+  function endStroke(e){
+    if (!drawing) return;
+    drawing = false;
+    document.body.classList.remove('drawing');
+    try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+    requestFlush();
+  }
+  canvas.addEventListener('pointerup', endStroke);
+  canvas.addEventListener('pointercancel', endStroke);
+
+  canvas.addEventListener('pointerleave', function(){
+    if (!drawing){ document.getElementById('cursor').style.display = ''; }
+  });
+
+  /* ---------------- 图片载入 ---------------- */
+
+  function loadFile(file){
+    if (!file || !/^image\//.test(file.type)) return;
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function(){
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = url;
+      initFromImage(img);
+    };
+    img.onerror = function(){
+      URL.revokeObjectURL(url);
+      alert('这张图片读不出来，换一张试试');
+    };
+    img.src = url;
+  }
+
+  var fileInput = document.getElementById('file');
+  fileInput.addEventListener('change', function(){
+    if (fileInput.files && fileInput.files[0]) loadFile(fileInput.files[0]);
+    fileInput.value = '';
+  });
+
+  document.getElementById('btnPick').addEventListener('click', function(){
+    fileInput.click();
+  });
+
+  // 换一张图：保留当前的笔刷和泡泡数量设置，只重铺新图的球阵
+  document.getElementById('btnSwap').addEventListener('click', function(){
+    fileInput.click();
+  });
+
+  document.addEventListener('paste', function(e){
+    var items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (var i = 0; i < items.length; i++){
+      if (items[i].type.indexOf('image') === 0){
+        var f = items[i].getAsFile();
+        if (f){ loadFile(f); e.preventDefault(); }
+        return;
+      }
+    }
+  });
+
+  var dragDepth = 0;
+  window.addEventListener('dragenter', function(e){
+    e.preventDefault();
+    dragDepth++;
+    document.body.classList.add('drag');
+  });
+  window.addEventListener('dragover', function(e){ e.preventDefault(); });
+  window.addEventListener('dragleave', function(e){
+    e.preventDefault();
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) document.body.classList.remove('drag');
+  });
+  window.addEventListener('drop', function(e){
+    e.preventDefault();
+    dragDepth = 0;
+    document.body.classList.remove('drag');
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) loadFile(f);
+  });
+
+  /* ---------------- 复原 / 导出 ---------------- */
+
+  document.getElementById('btnReset').addEventListener('click', function(){
+    if (!ready) return;
+    seedDots();          // 所有分裂结果丢掉，回到初始大球
+    paintAll();
+  });
+
+  var isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) ||
+              (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  document.getElementById('btnExport').addEventListener('click', function(){
+    if (!ready) return;
+    canvas.toBlob(function(blob){
+      if (!blob) return;
+      var url = URL.createObjectURL(blob);
+      if (isIOS){
+        document.getElementById('saveImg').src = url;
+        document.getElementById('saveModal').classList.add('on');
+      } else {
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'dot-reveal-' + Date.now() + '.png';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function(){ URL.revokeObjectURL(url); }, 8000);
+      }
+    }, 'image/png');
+  });
+
+  document.getElementById('btnCloseSave').addEventListener('click', function(){
+    document.getElementById('saveModal').classList.remove('on');
+  });
+
+  /* ---------------- 笔刷 ---------------- */
+
+  var brushEl = document.getElementById('brush');
+  var brushVal = document.getElementById('brushVal');
+
+  if (matchMedia('(pointer:coarse)').matches){
+    brushCss = 44;
+    brushEl.value = 44;
+  }
+  brushVal.textContent = brushCss;
+
+  brushEl.addEventListener('input', function(){
+    brushCss = +brushEl.value;
+    brushVal.textContent = brushCss;
+  });
+
+  /* ---------------- 泡泡数量 ---------------- */
+
+  var bubbleEl = document.getElementById('bubble');
+  var bubbleVal = document.getElementById('bubbleVal');
+
+  bubbleEl.value = bubbleCols;
+
+  function syncBubbleLabel(){
+    bubbleVal.textContent = cols + '×' + rows;
+  }
+
+  bubbleEl.addEventListener('input', function(){
+    bubbleVal.textContent = bubbleEl.value;
+  });
+
+  // 松手才重建网格（重建会丢掉已有分裂）
+  bubbleEl.addEventListener('change', function(){
+    bubbleCols = +bubbleEl.value;
+    if (lastImg) initFromImage(lastImg);
+  });
+
+
+  window.addEventListener('contextmenu', function(e){
+    if (e.target === canvas) e.preventDefault();
+  });
+
+})();
+</script>
+</body>
+</html>
