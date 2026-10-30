@@ -129,6 +129,20 @@ body.drag::after{
   -webkit-touch-callout:default;user-select:auto;-webkit-user-select:auto;
 }
 
+/* 消息提示：手机上没有控制台，读图失败得当场说清原因 */
+#toast{
+  position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));
+  transform:translate(-50%,10px);
+  max-width:min(88vw,440px);
+  background:rgba(42,38,34,.95);color:#F5F1E8;
+  font-size:13px;line-height:1.65;padding:11px 16px;border-radius:12px;
+  text-align:center;z-index:90;
+  opacity:0;pointer-events:none;
+  transition:opacity .22s,transform .22s;
+  box-shadow:0 8px 26px -10px rgba(42,38,34,.6);
+}
+#toast.on{opacity:1;transform:translate(-50%,0)}
+
 /* 窄屏：品牌副标题让位给按钮，按钮收紧，三个按钮刚好不挤 */
 @media (max-width:420px){
   header{padding-left:14px;padding-right:14px;gap:8px}
@@ -182,6 +196,7 @@ body.drag::after{
 </footer>
 
 <div id="cursor"></div>
+<div id="toast"></div>
 
 <div class="modal" id="saveModal">
   <p>长按图片 → 保存到相册</p>
@@ -331,15 +346,20 @@ body.drag::after{
 
   function initFromImage(img){
     lastImg = img;
+    // ImageBitmap 没有 naturalWidth，统一取有效尺寸
+    var iw = img.naturalWidth || img.width;
+    var ih = img.naturalHeight || img.height;
+    if (!iw || !ih){ toast('这张图解码出来是空的，换一张试试'); return; }
+
     var headerH = document.querySelector('header').getBoundingClientRect().height;
     var footerH = document.querySelector('footer').getBoundingClientRect().height;
 
     var availW = clamp(window.innerWidth - 40, 240, 1280);
     var availH = clamp(window.innerHeight - headerH - footerH - 28, 200, 1000);
 
-    var s = Math.min(availW / img.naturalWidth, availH / img.naturalHeight);
-    var cssW = Math.max(1, Math.round(img.naturalWidth * s));
-    var cssH = Math.max(1, Math.round(img.naturalHeight * s));
+    var s = Math.min(availW / iw, availH / ih);
+    var cssW = Math.max(1, Math.round(iw * s));
+    var cssH = Math.max(1, Math.round(ih * s));
     var dpr = clamp(window.devicePixelRatio || 1, 1, 2);
     dprNow = dpr;
 
@@ -665,20 +685,154 @@ body.drag::after{
 
   /* ---------------- 图片载入 ---------------- */
 
+  function toast(msg, ms){
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('on');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function(){ t.classList.remove('on'); }, ms || 3600);
+  }
+
+  // 从文件头几个字节判断真实格式。手机上没有控制台，只有靠这个
+  // 才能分清到底是「格式解不了」还是「图太大内存不够」
+  function sniffFormat(buf){
+    if (!buf || buf.byteLength < 12) return '未知格式';
+    var b = new Uint8Array(buf);
+    if (b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF) return 'JPEG';
+    if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47) return 'PNG';
+    if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return 'GIF';
+    if (b[0] === 0x42 && b[1] === 0x4D) return 'BMP';
+    if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+        b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return 'WebP';
+    // ISO BMFF 容器：第 4~7 字节是 ftyp，紧跟 4 字节品牌名
+    if (b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70){
+      var brand = String.fromCharCode(b[8], b[9], b[10], b[11]).toLowerCase();
+      if (brand === 'avif' || brand === 'avis') return 'AVIF';
+      if (/^(heic|heix|hevc|hevx|heim|heis|hevm|hevs|mif1|msf1)$/.test(brand)) return 'HEIC';
+    }
+    return '未知格式';
+  }
+
+  function humanSize(bytes){
+    if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+    return Math.max(1, Math.round(bytes / 1024)) + ' KB';
+  }
+
   function loadFile(file){
-    if (!file || !/^image\//.test(file.type)) return;
+    if (!file) return;
+    if (file.type && !/^image\//.test(file.type)){
+      toast('这不是图片文件');
+      return;
+    }
+    var head = file.slice(0, 32);
+    var fr = new FileReader();
+    fr.onload = function(){ beginLoad(file, sniffFormat(fr.result)); };
+    fr.onerror = function(){ beginLoad(file, '未知格式'); };
+    fr.readAsArrayBuffer(head);
+  }
+
+  function beginLoad(file, fmt){
+    if (fmt === 'HEIC'){
+      toast('这是 iPhone 的 HEIC 格式，浏览器解不了。' +
+            '用截图代替，或到「设置 → 相机 → 格式」改成「兼容性最佳」再拍。', 7500);
+      return;
+    }
+    if (fmt === 'AVIF' && !supportsAvif()){
+      toast('AVIF 格式这台设备不支持，转成 JPG 或者直接截图吧。', 7500);
+      return;
+    }
+    tryImageElement(file, fmt);
+  }
+
+  var avifOk = null;
+  function supportsAvif(){
+    if (avifOk !== null) return avifOk;
+    try {
+      var c = document.createElement('canvas');
+      c.width = c.height = 1;
+      avifOk = c.toDataURL('image/avif').indexOf('data:image/avif') === 0;
+    } catch (_){ avifOk = false; }
+    return avifOk;
+  }
+
+  // 第 1 步：普通 <img>。兼容性最好，绝大多数图走这里就够
+  function tryImageElement(file, fmt){
     var url = URL.createObjectURL(file);
     var img = new Image();
+    var settled = false;
+
+    var timer = setTimeout(function(){
+      if (settled) return;
+      settled = true;
+      URL.revokeObjectURL(url);
+      tryBitmap(file, fmt);
+    }, 15000);
+
     img.onload = function(){
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-      objectUrl = url;
-      initFromImage(img);
+      if (settled) return;
+      settled = true; clearTimeout(timer);
+      adoptImage(img, url);
     };
     img.onerror = function(){
+      if (settled) return;
+      settled = true; clearTimeout(timer);
       URL.revokeObjectURL(url);
-      alert('这张图片读不出来，换一张试试');
+      tryBitmap(file, fmt);          // 换条路再试，别急着报错
     };
     img.src = url;
+  }
+
+  // 第 2 步：createImageBitmap。相册里的大图（4000×3000 起步）用 <img> 解码
+  // 要吃掉几十 MB，容易失败；这个接口能边解码边缩小，内存省得多
+  function tryBitmap(file, fmt){
+    if (!window.createImageBitmap){ tryDataUrl(file, fmt); return; }
+
+    createImageBitmap(file, { resizeWidth: 2400, resizeQuality: 'high' })
+      .then(function(bmp){ adoptImage(bmp, null); })
+      .catch(function(){
+        // 部分浏览器不认 resize 选项，退回不带参数的调用
+        return createImageBitmap(file).then(
+          function(bmp){ adoptImage(bmp, null); },
+          function(){ tryDataUrl(file, fmt); }
+        );
+      });
+  }
+
+  // 第 3 步：读成 dataURL 再来一遍。极少数安卓浏览器的 blob URL 有问题，
+  // 这条路能绕过去
+  function tryDataUrl(file, fmt){
+    var fr = new FileReader();
+    fr.onload = function(){
+      var img = new Image();
+      img.onload = function(){ adoptImage(img, null); };
+      img.onerror = function(){ failLoad(file, fmt); };
+      img.src = fr.result;
+    };
+    fr.onerror = function(){ failLoad(file, fmt); };
+    fr.readAsDataURL(file);
+  }
+
+  function adoptImage(source, blobUrl){
+    var prev = lastImg;
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = blobUrl;
+    try {
+      initFromImage(source);
+      if (prev && prev !== source && prev.close){ try { prev.close(); } catch (_){} }
+    } catch (err){
+      toast('这张图处理不动了，先在相册里裁小一点或者截图再试。', 6000);
+    }
+  }
+
+  function failLoad(file, fmt){
+    var size = humanSize(file.size);
+    if (file.size > 12 * 1048576){
+      toast('图片太大（' + size + '，' + fmt + '），解码时内存不够。' +
+            '先在相册里裁小，或者直接截图再选。', 7500);
+    } else {
+      toast('这张读不出来（' + fmt + '，' + size + '）。' +
+            '试试截图，或者把图片发到微信再转存一次（会自动转成 JPG）。', 7500);
+    }
   }
 
   var fileInput = document.getElementById('file');
